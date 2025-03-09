@@ -154,6 +154,53 @@ class Stitcher:
         cameras = self.perform_wave_correction(cameras)
         return [cam.R for cam in cameras]
 
+    def stitch_with_homographies(self, images, homographies, feature_masks=[]):
+        """
+        Generates a panoramic image from the input images using precomputed homography matrices.
+
+        Parameters:
+        images: A list of image file paths or NumPy arrays representing the images.
+        homographies: A list of 3x3 homography matrices corresponding to each image.
+                        For example, in a video, the first frame is represented by the identity matrix,
+                        and transformation matrices for subsequent frames are computed relative to the reference frame.
+        feature_masks: (Optional) A list of masks for feature detection. (Not used in this function)
+
+        Returns:
+        The final panoramic image as a NumPy array.
+        """
+        
+        self.images = Images.of(
+            images, self.medium_megapix, self.low_megapix, self.final_megapix
+        )
+        
+        imgs = self.resize_medium_resolution()
+        # Since precomputed homography matrices are used, feature detection and matching are skipped.
+        # Wrap the provided homography matrices in DummyCamera objects.
+        class DummyCamera:
+            def __init__(self, R):
+                self.R = R.astype(np.float32)
+        cameras = [DummyCamera(R) for R in homographies]
+        
+        self.estimate_scale(cameras)
+        
+        imgs = self.resize_low_resolution(imgs)
+        imgs, masks, corners, sizes = self.warp_low_resolution(imgs, cameras)
+        self.prepare_cropper(imgs, masks, corners, sizes)
+        imgs, masks, corners, sizes = self.crop_low_resolution(imgs, masks, corners, sizes)
+        self.estimate_exposure_errors(corners, imgs, masks)
+        seam_masks = self.find_seam_masks(imgs, corners, masks)
+        
+        imgs = self.resize_final_resolution()
+        imgs, masks, corners, sizes = self.warp_final_resolution(imgs, cameras)
+        imgs, masks, corners, sizes = self.crop_final_resolution(imgs, masks, corners, sizes)
+        
+        self.set_masks(masks)
+        imgs = self.compensate_exposure_errors(corners, imgs)
+        seam_masks = self.resize_seam_masks(seam_masks)
+        
+        self.initialize_composition(corners, sizes)
+        self.blend_images(imgs, seam_masks, corners)
+        return self.create_final_panorama()
 
 
     def resize_medium_resolution(self):
