@@ -91,7 +91,7 @@ class Stitcher:
     def stitch_verbose(self, images, feature_masks=[], verbose_dir=None):
         return verbose_stitching(self, images, feature_masks, verbose_dir)
 
-    def stitch(self, images, feature_masks=[]):
+    def stitch(self, images, cameras=None, feature_masks=[]):
         self.images = Images.of(
             images, self.medium_megapix, self.low_megapix, self.final_megapix
         )
@@ -100,9 +100,10 @@ class Stitcher:
         features = self.find_features(imgs, feature_masks)
         matches = self.match_features(features)
         imgs, features, matches = self.subset(imgs, features, matches)
-        cameras = self.estimate_camera_parameters(features, matches)
-        cameras = self.refine_camera_parameters(features, matches, cameras)
-        cameras = self.perform_wave_correction(cameras)
+        if cameras == None:
+            cameras = self.estimate_camera_parameters(features, matches)
+            cameras = self.refine_camera_parameters(features, matches, cameras)
+            cameras = self.perform_wave_correction(cameras)
         self.estimate_scale(cameras)
 
         imgs = self.resize_low_resolution(imgs)
@@ -140,41 +141,6 @@ class Stitcher:
         cameras = self.refine_camera_parameters(features, matches, cameras)
         cameras = self.perform_wave_correction(cameras)
         return cameras
-
-    # 사전에 조사한 카메라 파라미터 정보로 스티칭
-    def stitch_with_cameras(self, images, cameras, feature_masks=[]):
-        self.images = Images.of(
-            images, self.medium_megapix, self.low_megapix, self.final_megapix
-        )
-
-        imgs = self.resize_medium_resolution()
-        features = self.find_features(imgs, feature_masks)
-        matches = self.match_features(features)
-        imgs, features, matches = self.subset(imgs, features, matches)
-        self.estimate_scale(cameras)
-
-        imgs = self.resize_low_resolution(imgs)
-        imgs, masks, corners, sizes = self.warp_low_resolution(imgs, cameras)
-        self.prepare_cropper(imgs, masks, corners, sizes)
-        imgs, masks, corners, sizes = self.crop_low_resolution(
-            imgs, masks, corners, sizes
-        )
-        self.estimate_exposure_errors(corners, imgs, masks)
-        seam_masks = self.find_seam_masks(imgs, corners, masks)
-
-        imgs = self.resize_final_resolution()
-        imgs, masks, corners, sizes = self.warp_final_resolution(imgs, cameras)
-        imgs, masks, corners, sizes = self.crop_final_resolution(
-            imgs, masks, corners, sizes
-        )
-        self.set_masks(masks)
-        imgs = self.compensate_exposure_errors(corners, imgs)
-        seam_masks = self.resize_seam_masks(seam_masks)
-
-        self.initialize_composition(corners, sizes)
-        self.blend_images(imgs, seam_masks, corners)
-        return self.create_final_panorama()
-
 
     def resize_medium_resolution(self):
         return list(self.images.resize(Images.Resolution.MEDIUM))
