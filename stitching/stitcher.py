@@ -127,6 +127,35 @@ class Stitcher:
         self.blend_images(imgs, seam_masks, corners)
         return self.create_final_panorama()
 
+    def get_reference_homography(self, images, feature_masks=[]):
+        """
+        Calculates and returns the homography (or affine) transformation matrices for the first two frames
+        in the provided list of images (or video frames). In the case of a video, the first frame is considered 
+        the reference frame, and the transformation matrix for the second frame is computed. This computed 
+        matrix can then be applied to subsequent frames.
+
+        Parameters:
+        images: A list of image file paths or NumPy arrays representing the loaded images.
+        feature_masks: (Optional) A list of masks to be used for feature detection on each image.
+
+        Returns:
+        A list of transformation matrices (the R attribute from the two camera objects). Typically, 
+        cameras[0].R is the identity matrix, and cameras[1].R is the computed homography.
+        """
+        self.images = Images.of(
+            images, self.medium_megapix, self.low_megapix, self.final_megapix
+        )
+        imgs = self.resize_medium_resolution()
+        features = self.find_features(imgs, feature_masks)
+        matches = self.match_features(features)
+        imgs, features, matches = self.subset(imgs, features, matches)
+        cameras = self.estimate_camera_parameters(features, matches)
+        cameras = self.refine_camera_parameters(features, matches, cameras)
+        cameras = self.perform_wave_correction(cameras)
+        return [cam.R for cam in cameras]
+
+
+
     def resize_medium_resolution(self):
         return list(self.images.resize(Images.Resolution.MEDIUM))
 
