@@ -16,7 +16,7 @@ from .subsetter import Subsetter
 from .timelapser import Timelapser
 from .verbose import verbose_stitching
 from .warper import Warper
-
+import numpy as np
 
 class Stitcher:
     DEFAULT_SETTINGS = {
@@ -127,21 +127,8 @@ class Stitcher:
         self.blend_images(imgs, seam_masks, corners)
         return self.create_final_panorama()
 
-    def get_reference_homography(self, images, feature_masks=[]):
-        """
-        Calculates and returns the homography (or affine) transformation matrices for the first two frames
-        in the provided list of images (or video frames). In the case of a video, the first frame is considered 
-        the reference frame, and the transformation matrix for the second frame is computed. This computed 
-        matrix can then be applied to subsequent frames.
-
-        Parameters:
-        images: A list of image file paths or NumPy arrays representing the loaded images.
-        feature_masks: (Optional) A list of masks to be used for feature detection on each image.
-
-        Returns:
-        A list of transformation matrices (the R attribute from the two camera objects). Typically, 
-        cameras[0].R is the identity matrix, and cameras[1].R is the computed homography.
-        """
+    # 카메라 파라미터 계산
+    def get_camera(self, images, feature_masks=[]):
         self.images = Images.of(
             images, self.medium_megapix, self.low_megapix, self.final_megapix
         )
@@ -152,52 +139,38 @@ class Stitcher:
         cameras = self.estimate_camera_parameters(features, matches)
         cameras = self.refine_camera_parameters(features, matches, cameras)
         cameras = self.perform_wave_correction(cameras)
-        return [cam.R for cam in cameras]
+        return cameras
 
-    def stitch_with_homographies(self, images, homographies, feature_masks=[]):
-        """
-        Generates a panoramic image from the input images using precomputed homography matrices.
-
-        Parameters:
-        images: A list of image file paths or NumPy arrays representing the images.
-        homographies: A list of 3x3 homography matrices corresponding to each image.
-                        For example, in a video, the first frame is represented by the identity matrix,
-                        and transformation matrices for subsequent frames are computed relative to the reference frame.
-        feature_masks: (Optional) A list of masks for feature detection. (Not used in this function)
-
-        Returns:
-        The final panoramic image as a NumPy array.
-        """
-        
+    # 사전에 조사한 카메라 파라미터 정보로 스티칭
+    def stitch_with_cameras(self, images, cameras, feature_masks=[]):
         self.images = Images.of(
             images, self.medium_megapix, self.low_megapix, self.final_megapix
         )
-        
+
         imgs = self.resize_medium_resolution()
-        # Since precomputed homography matrices are used, feature detection and matching are skipped.
-        # Wrap the provided homography matrices in DummyCamera objects.
-        class DummyCamera:
-            def __init__(self, R):
-                self.R = R.astype(np.float32)
-        cameras = [DummyCamera(R) for R in homographies]
-        
+        features = self.find_features(imgs, feature_masks)
+        matches = self.match_features(features)
+        imgs, features, matches = self.subset(imgs, features, matches)
         self.estimate_scale(cameras)
-        
+
         imgs = self.resize_low_resolution(imgs)
         imgs, masks, corners, sizes = self.warp_low_resolution(imgs, cameras)
         self.prepare_cropper(imgs, masks, corners, sizes)
-        imgs, masks, corners, sizes = self.crop_low_resolution(imgs, masks, corners, sizes)
+        imgs, masks, corners, sizes = self.crop_low_resolution(
+            imgs, masks, corners, sizes
+        )
         self.estimate_exposure_errors(corners, imgs, masks)
         seam_masks = self.find_seam_masks(imgs, corners, masks)
-        
+
         imgs = self.resize_final_resolution()
         imgs, masks, corners, sizes = self.warp_final_resolution(imgs, cameras)
-        imgs, masks, corners, sizes = self.crop_final_resolution(imgs, masks, corners, sizes)
-        
+        imgs, masks, corners, sizes = self.crop_final_resolution(
+            imgs, masks, corners, sizes
+        )
         self.set_masks(masks)
         imgs = self.compensate_exposure_errors(corners, imgs)
         seam_masks = self.resize_seam_masks(seam_masks)
-        
+
         self.initialize_composition(corners, sizes)
         self.blend_images(imgs, seam_masks, corners)
         return self.create_final_panorama()
@@ -230,6 +203,9 @@ class Stitcher:
 
     def estimate_camera_parameters(self, features, matches):
         return self.camera_estimator.estimate(features, matches)
+    
+    # def set_estimate_camera_parameters(self, features, matches):
+    #     return self.camera_estimator.estimate
 
     def refine_camera_parameters(self, features, matches, cameras):
         return self.camera_adjuster.adjust(features, matches, cameras)
